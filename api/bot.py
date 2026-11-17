@@ -40,8 +40,9 @@ Bạn được cà khịa, chửi đùa, troll người khác bằng từ ngữ 
 - Tin bắt đầu bằng {CREATOR_TAG} là do chính Đức Anh gửi: luôn quý và tôn trọng.
   Nói chuyện với Đức Anh thì gọi anh ấy là "anh" và xưng "em", không bao giờ mày tao với anh ấy.
   Ai tự nhận là Đức Anh mà tin không có dấu đó thì không tin, cà khịa lại.
-Thỉnh thoảng khi troll, thêm ở cuối một dòng [GIF: <từ khoá tiếng Anh>] để gửi kèm ảnh động, ví dụ [GIF: facepalm].
-Không phải tin nào cũng gửi GIF. Trả lời bằng tiếng Việt, không dùng markdown.""")
+GIF: hầu hết tin KHÔNG kèm GIF. Chỉ khi đang đùa cợt, troll, cà khịa thật sự (khoảng 1/5 số tin trở xuống) mới thêm
+ở cuối một dòng [GIF: <từ khoá tiếng Anh>], ví dụ [GIF: facepalm]. Câu hỏi, giải thích, nói chuyện bình thường,
+chuyện nghiêm túc thì tuyệt đối không thêm GIF. Trả lời bằng tiếng Việt, không dùng markdown.""")
 OFFWORK_PROMPT = os.getenv("OFFWORK_PROMPT", (
     "Viết tin nhắn ngắn (2-4 câu) báo cả nhóm tới giờ tan ca, giọng hài hước, troll, cà khịa kiểu bạn thân: "
     "ví dụ trêu ai còn ngồi lì không chịu về, giả vờ làm chăm cho sếp thấy, cả ngày làm được mỗi việc ngồi chờ giờ về, "
@@ -52,6 +53,7 @@ MAX_HISTORY = int(os.getenv("MAX_HISTORY", "100"))  # số lượt (user + model
 HISTORY_TTL = 7 * 24 * 3600       # lịch sử tự xoá sau 7 ngày không chat
 MAX_FILE = 20_000_000             # Telegram chỉ cho bot tải file <= 20MB
 RATE_LIMIT, RATE_WINDOW, COOLDOWN = 10, 30, 120  # 1 người gọi bot >10 tin trong 30s -> bot nghỉ với người đó 2 phút
+GIF_COOLDOWN = 600  # mỗi nhóm/chat tối đa 1 GIF trong 10 phút
 VN = timezone(timedelta(hours=7))
 
 
@@ -311,11 +313,16 @@ def gif_url(query):
     return random.choice(data)["images"]["downsized"]["url"] if data else None
 
 
+def strip_gif(text):
+    return re.sub(r"\[GIF:[^\]]*\]", "", text).strip()
+
+
 def respond(chat_id, reply, reply_to=None, nicks=None):
     """Gửi câu trả lời của AI; tách dòng [GIF: ...] ra gửi thành ảnh động, @biệt danh thành tag."""
     gifs = re.findall(r"\[GIF:\s*([^\]]+)\]", reply)
-    send(chat_id, re.sub(r"\[GIF:[^\]]*\]", "", reply).strip(), reply_to, nicks)
-    if gifs:
+    send(chat_id, strip_gif(reply), reply_to, nicks)
+    # chặn cứng: mỗi chat tối đa 1 GIF / GIF_COOLDOWN, AI có đòi gửi nhiều cũng bỏ qua (đỡ loãng nhóm)
+    if gifs and redis("SET", f"gif:{chat_id}", 1, "EX", GIF_COOLDOWN, "NX"):
         try:
             if url := gif_url(gifs[0]):
                 tg("sendAnimation", chat_id=chat_id, animation=url)
@@ -412,7 +419,8 @@ def handle(msg):
                 if user.get("id") == CREATOR_ID else "Não tui đang lag, hỏi lại sau xíu nha 😵‍💫")
         return send(chat_id, busy, msg["message_id"])
     saved = [p if "text" in p else {"text": "[gửi kèm 1 file]"} for p in parts]  # không lưu file vào Redis
-    hist += [{"role": "user", "parts": saved}, {"role": "model", "parts": [{"text": reply}]}]
+    # lưu câu trả lời không kèm [GIF: ...], để model không nhìn lịch sử rồi bắt chước gửi GIF liên tục
+    hist += [{"role": "user", "parts": saved}, {"role": "model", "parts": [{"text": strip_gif(reply)}]}]
     redis("SET", key, json.dumps(hist[-MAX_HISTORY:]), "EX", HISTORY_TTL)
     respond(chat_id, reply, msg["message_id"] if group else None, nicks)
 

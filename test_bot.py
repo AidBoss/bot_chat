@@ -15,6 +15,18 @@ assert {6664632552, -1003719756588, -1002} <= bot.ALLOWED  # người tạo + nh
 assert bot.mentions_creator("@anhdd88 ngu")  # username cũng được bảo vệ
 bot.CREATOR_ID = 42  # các test dưới dùng id giả cho gọn
 
+# GIF: mỗi chat tối đa 1 GIF / GIF_COOLDOWN (Redis SET NX EX); dòng [GIF] không lọt vào tin chữ
+calls, cool = [], set()
+_saved_gif = bot.tg, bot.redis, bot.gif_url
+bot.tg = lambda m, **p: calls.append((m, p.get("text") or p.get("animation")))
+bot.redis = lambda *c: (None if c[1] in cool else (cool.add(c[1]) or "OK")) if c[0] == "SET" and "NX" in c else None
+bot.gif_url = lambda q: "url:" + q
+bot.respond(1, "haha\n[GIF: lol]"); bot.respond(1, "lại nè [GIF: lol]"); bot.respond(2, "nhóm khác [GIF: wow]"); bot.respond(1, "không gif")
+assert calls == [("sendMessage", "haha"), ("sendAnimation", "url:lol"), ("sendMessage", "lại nè"),
+                 ("sendMessage", "nhóm khác"), ("sendAnimation", "url:wow"), ("sendMessage", "không gif")], calls
+assert bot.strip_gif("ê nha\n[GIF: facepalm]") == "ê nha"  # lịch sử lưu bản này, không có dòng GIF
+bot.tg, bot.redis, bot.gif_url = _saved_gif
+
 # Gemini: model chính 503/timeout -> tự thử model dự phòng; hết model thì mới báo lỗi
 assert bot.MODELS == ["gemini-flash-lite-latest", "gemini-flash-latest"]
 _post, tried = bot.post, []
