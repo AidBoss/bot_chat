@@ -403,6 +403,15 @@ def handle(msg):
             return send(chat_id, "File quá 20MB, tui không đọc nổi.")
         data = base64.b64encode(download(file["file_id"])).decode()
         parts.append({"inline_data": {"mime_type": file.get("mime_type", "image/jpeg"), "data": data}})
+    sticker = msg.get("sticker")  # sticker không có chữ: báo emoji + gửi hình cho AI nhìn
+    if sticker:
+        parts.append({"text": label(user, f"[gửi sticker {sticker.get('emoji', '')}]", group, nicks)})
+        # sticker động (.tgs) / video (.webm) Gemini không đọc được -> dùng ảnh thumbnail
+        img = sticker.get("thumbnail") if sticker.get("is_animated") or sticker.get("is_video") else sticker
+        if img:
+            raw = download(img["file_id"])
+            mime = "image/webp" if raw[:4] == b"RIFF" else "image/jpeg"
+            parts.append({"inline_data": {"mime_type": mime, "data": base64.b64encode(raw).decode()}})
     if not parts:
         return
 

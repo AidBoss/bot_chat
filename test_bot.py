@@ -248,4 +248,18 @@ assert "cố định" in bot.allow_command(-1003719756588, "/disallow")  # nhóm
 sets["allowed_chats"].add("-555"); sets["offwork_chats"].add("-555"); sent.clear()
 bot.scheduled("offwork", datetime(2026, 11, 16, 17, 34, tzinfo=bot.VN))
 assert -555 in sent  # nhóm /allow + /tanca on thì nhận tin tan ca
+
+# sticker: reply tin của bot bằng sticker -> AI nhận emoji + hình (sticker động dùng thumbnail)
+got = []
+bot.download = lambda fid: {"S": b"RIFF....WEBP", "T": b"\xff\xd8thumb"}[fid]
+bot.ask = lambda contents, recent="", nicks=None: got.append(contents[-1]["parts"]) or "ok"
+to_bot = {"from": {"username": "x"}}
+st = lambda mid, **s: {"message_id": mid, "chat": grp, "from": {"id": 11, "first_name": "Lộc"}, "sticker": s, "reply_to_message": to_bot}
+bot.handle(st(70, file_unique_id="Z1", file_id="S", emoji="😂"))
+assert got[-1][0]["text"].endswith("[gửi sticker 😂]") and got[-1][1]["inline_data"]["mime_type"] == "image/webp", got
+bot.handle(st(71, file_unique_id="Z2", file_id="X", emoji="🔥", is_animated=True, thumbnail={"file_id": "T"}))
+assert got[-1][1]["inline_data"]["mime_type"] == "image/jpeg"  # sticker động -> thumbnail
+n = len(got)
+bot.handle({**st(72, file_unique_id="Z3", file_id="S", emoji="😂"), "reply_to_message": None})
+assert len(got) == n  # sticker thường trong nhóm (không reply bot) -> bỏ qua, không tốn Gemini
 print("OK")
