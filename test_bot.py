@@ -223,4 +223,17 @@ for _ in range(10): bot.rate_limited(42)
 bot.handle({"message_id": 41, "chat": grp, "from": {"id": 42}, "text": "@x ê"})
 assert sent == [-1002] and "anh ơi" in tg_calls[0][2], tg_calls
 assert not sets["banned_gifs"]
+
+# /allow, /disallow: chỉ người tạo; nhóm chưa có quyền vẫn /allow được; có hiệu lực ngay (Redis, không cần redeploy)
+new = {"id": -555, "type": "supergroup"}
+say = lambda uid, text: (tg_calls.clear(), bot.handle({"message_id": 60, "chat": new, "from": {"id": uid, "first_name": "B"}, "text": text}), tg_calls)[2]
+assert "chưa được phép" in say(7, "@x ê")[0][2]
+assert "ra ngoài nắng" in say(7, "/allow")[0][2] and not sets["allowed_chats"]  # người khác không tự cấp quyền được
+assert "dùng được bot" in say(42, "/allow")[0][2] and bot.is_allowed(-555, 7)
+assert "chưa được phép" not in str(say(7, "@x ê"))  # giờ thành viên nhóm chat được
+assert "Đã gỡ" in say(42, "/disallow")[0][2] and not bot.is_allowed(-555, 7)
+assert "cố định" in bot.allow_command(-1003719756588, "/disallow")  # nhóm mặc định không gỡ được
+sets["allowed_chats"].add("-555"); sets["offwork_chats"].add("-555"); sent.clear()
+bot.scheduled("offwork", datetime(2026, 11, 16, 17, 34, tzinfo=bot.VN))
+assert -555 in sent  # nhóm /allow + /tanca on thì nhận tin tan ca
 print("OK")

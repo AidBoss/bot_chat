@@ -161,6 +161,27 @@ def nick_command(msg, text):
     return f"Ok, từ giờ {name} là {nick} nha."
 
 
+ALLOWED_CHATS = "allowed_chats"  # Redis set các nhóm được cấp quyền bằng /allow (ngoài ALLOWED_IDS cố định)
+
+
+def is_allowed(chat_id, user_id=None):
+    """Có quyền nếu: là người tạo, hoặc chat/user nằm trong ALLOWED (env + mặc định), hoặc nhóm đã /allow."""
+    if user_id == CREATOR_ID or {chat_id, user_id} & ALLOWED:
+        return True
+    return redis("SISMEMBER", ALLOWED_CHATS, str(chat_id)) == 1
+
+
+def allow_command(chat_id, text):
+    """/allow: cấp quyền cho chat này. /disallow: gỡ (trừ nhóm cấp cố định trong code/ALLOWED_IDS)."""
+    if text.split()[0].split("@")[0].lower() == "/allow":
+        redis("SADD", ALLOWED_CHATS, str(chat_id))
+        return "Ok anh, nhóm này dùng được bot rồi nha."
+    if chat_id in ALLOWED:
+        return "Nhóm này được cấp cố định (nhóm mặc định hoặc ALLOWED_IDS), không gỡ bằng lệnh được anh ơi."
+    redis("SREM", ALLOWED_CHATS, str(chat_id))
+    return "Đã gỡ quyền dùng bot của nhóm này."
+
+
 OFFWORK_CHATS = "offwork_chats"  # Redis set các chat đã bật tin tan ca
 
 
@@ -316,7 +337,7 @@ def warn_spammer(chat_id, user, reply_to):
     respond(chat_id, reply, reply_to, nicks)
 
 
-COMMANDS = {"/start", "/reset", "/nick", "/nicks", "/tanca", "/xoagif", "/xoasticker", "/boxoagif"}
+COMMANDS = {"/start", "/reset", "/nick", "/nicks", "/tanca", "/xoagif", "/xoasticker", "/boxoagif", "/allow", "/disallow"}
 
 
 def handle(msg):
@@ -341,7 +362,9 @@ def handle(msg):
         return  # lệnh lạ (của bot khác, gõ bậy...): im lặng, ai gõ cũng vậy
     if cmd and user.get("id") != CREATOR_ID:  # lệnh của bot chỉ người tạo dùng được; không gọi Gemini
         return send(chat_id, "Biết cái gì mà nghịch, đi ra ngoài nắng mà chơi cho mát 😎", msg["message_id"] if group else None)
-    if not {chat_id, user.get("id")} & ALLOWED:
+    if cmd in ("/allow", "/disallow"):  # trước bước kiểm quyền: nhóm chưa có quyền vẫn /allow được
+        return send(chat_id, allow_command(chat_id, text))
+    if not is_allowed(chat_id, user.get("id")):
         return send(chat_id, f"Bạn chưa được phép dùng bot.\nuser id: {user.get('id')}\nchat id: {chat_id}")
 
     key = f"h:{chat_id}"
@@ -399,14 +422,14 @@ def working_saturday(d):
 
 def scheduled(job, now=None):
     """QStash gọi theo lịch. Chỉ có job 'offwork': tan ca 17h34 T2-T6, 17h04 thứ 7 đi làm,
-    gửi vào nhóm mặc định (luôn luôn) + các nhóm đã /tanca on và nằm trong ALLOWED_IDS. Job khác (vd lịch chào sáng cũ còn sót) bị bỏ qua."""
+    gửi vào nhóm mặc định (luôn luôn) + các nhóm đã /tanca on và có quyền (ALLOWED_IDS hoặc /allow). Job khác (vd lịch chào sáng cũ còn sót) bị bỏ qua."""
     if job != "offwork":
         return
     now = now or datetime.now(VN)
     if now.weekday() == 5 and not working_saturday(now.date()):
         return  # thứ 7 nghỉ: không gửi
     on = {DEFAULT_GROUP} | set(map(int, redis("SMEMBERS", OFFWORK_CHATS) or []))  # nhóm mặc định + nhóm đã /tanca on
-    chats = sorted(c for c in on if c in ALLOWED)
+    chats = sorted(c for c in on if is_allowed(c))
     if not chats:
         return
     today = f"{WEEKDAYS[now.weekday()]}, {now:%d/%m/%Y}"

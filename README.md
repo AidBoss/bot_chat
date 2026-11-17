@@ -30,7 +30,7 @@ Mọi thứ nằm trong một file [api/bot.py](api/bot.py) (endpoint `/api/bot`
    ```bash
    curl "https://api.telegram.org/bot$TELEGRAM_TOKEN/setWebhook" -d "url=https://<app>.vercel.app/api/bot" -d "secret_token=$WEBHOOK_SECRET"
    ```
-4. **Lấy id:** nhắn riêng cho bot, rồi @mention bot trong nhóm. Bot sẽ trả lời kèm `user id` và `chat id`. Chỉ cần làm bước này khi thêm nhóm khác ngoài nhóm mặc định: điền chat id của nhóm đó vào `ALLOWED_IDS`, rồi **redeploy** (Vercel chỉ nhận biến mới sau khi deploy lại).
+4. **Thêm nhóm khác:** thêm bot vào nhóm rồi người tạo gõ `/allow` trong nhóm đó. Có hiệu lực ngay, không cần sửa `ALLOWED_IDS` hay redeploy.
 5. **Hẹn giờ:** vào Upstash Console → QStash → Schedules, tạo 2 lịch, cùng Destination `https://<app>.vercel.app/api/bot`. Cron tính theo giờ UTC (giờ Việt Nam trừ 7 tiếng).
 
    | Lịch | Cron (UTC) | Body |
@@ -51,6 +51,7 @@ Mọi thứ nằm trong một file [api/bot.py](api/bot.py) (endpoint `/api/bot`
 - `/nick <biệt danh>`: **reply vào tin của một người** rồi gõ lệnh để đặt biệt danh (gõ `/nick` không kèm chữ để xoá). Chỉ người tạo (`CREATOR_ID`, ghi cứng trong code) được đặt. Bot sẽ gọi người đó bằng biệt danh, hiểu khi ai đó nhắc tới biệt danh, và tag được đúng người.
 - `/nicks`: xem danh sách biệt danh.
 - `/xoagif` hoặc `/xoasticker`: **reply vào một GIF hoặc sticker** rồi gõ lệnh để cấm nó. Bot xoá tin đó ngay, và xoá tiếp mỗi khi có người gửi lại đúng GIF/sticker này. `/boxoagif` để bỏ cấm tất cả. Chỉ người tạo dùng được. Bot cần là **admin có quyền Xoá tin nhắn** trong nhóm.
+- `/allow` / `/disallow`: cấp hoặc gỡ quyền dùng bot cho nhóm hiện tại, có hiệu lực ngay. Nhóm mặc định và nhóm trong `ALLOWED_IDS` luôn có quyền, không gỡ bằng lệnh được.
 - `/tanca on` / `/tanca off`: bật/tắt tin tan ca cho nhóm hiện tại. Chỉ người tạo được bật/tắt. Gõ `/tanca` để xem nhóm đang bật hay tắt. Nhóm mặc định luôn bật, không tắt được.
 - `/reset`: xoá lịch sử chat.
 - Chống spam: người nào gọi bot quá 10 tin trong 30 giây thì bot báo một lần rồi im lặng với người đó 2 phút. Muốn đổi mức này thì sửa `RATE_LIMIT`, `RATE_WINDOW`, `COOLDOWN` trong code. Lịch sử cũng tự xoá sau 7 ngày không chat.
