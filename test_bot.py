@@ -15,6 +15,22 @@ assert {6664632552, -1003719756588, -1002} <= bot.ALLOWED  # người tạo + nh
 assert bot.mentions_creator("@anhdd88 ngu")  # username cũng được bảo vệ
 bot.CREATOR_ID = 42  # các test dưới dùng id giả cho gọn
 
+# Gemini: model chính 503/timeout -> tự thử model dự phòng; hết model thì mới báo lỗi
+assert bot.MODELS == ["gemini-flash-lite-latest", "gemini-flash-latest"]
+_post, tried = bot.post, []
+def flaky_post(url, data, headers={}, timeout=60):
+    tried.append((url.split("/models/")[1].split(":")[0], timeout))
+    if "lite" in url: raise RuntimeError('503: {"status": "UNAVAILABLE"}')
+    return {"candidates": [{"content": {"parts": [{"text": "chào anh"}]}}]}
+bot.post = flaky_post
+assert bot.gemini([]) == "chào anh" and tried == [("gemini-flash-lite-latest", 25), ("gemini-flash-latest", 25)]
+bot.post = lambda *a, **k: (_ for _ in ()).throw(TimeoutError("The read operation timed out"))
+try:
+    bot.gemini([]); assert False
+except TimeoutError:
+    pass  # cả 2 model đều chậm -> ném lỗi cho handle báo "đang lag"
+bot.post = _post
+
 
 def b64(raw):
     return base64.urlsafe_b64encode(raw).decode().rstrip("=")

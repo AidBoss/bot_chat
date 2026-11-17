@@ -12,7 +12,7 @@ Mọi thứ nằm trong một file [api/bot.py](api/bot.py) (endpoint `/api/bot`
 | `BOT_USERNAME` | ✔ | Username của bot, ví dụ `may_ai_bot` |
 | `WEBHOOK_SECRET` | ✔ | Chuỗi bí mật tự đặt (chỉ gồm `A-Z a-z 0-9 _ -`), tạo bằng `openssl rand -hex 32` |
 | `GEMINI_API_KEY` | ✔ | Key lấy ở https://aistudio.google.com/apikey |
-| `GEMINI_MODEL` | | Mặc định `gemini-flash-latest` |
+| `GEMINI_MODEL` | | Mặc định `gemini-flash-lite-latest` (nhanh). `gemini-flash-latest` thông minh hơn nhưng chậm, gói free dễ bị timeout |
 | `UPSTASH_REDIS_REST_URL`, `UPSTASH_REDIS_REST_TOKEN` | ✔ | Lấy ở Upstash Console → Redis → tab REST API |
 | `QSTASH_CURRENT_SIGNING_KEY`, `QSTASH_NEXT_SIGNING_KEY` | ✔ | Lấy ở Upstash Console → QStash → Signing Keys |
 | `ALLOWED_IDS` | | Thêm user id / chat id được dùng bot, cách nhau bằng dấu phẩy. Người tạo và nhóm mặc định `-1003719756588` luôn có quyền, không cần điền |

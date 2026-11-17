@@ -1,4 +1,4 @@
-import base64, codecs, hashlib, hmac, json, os, random, re, time, unicodedata, urllib.error, urllib.parse, urllib.request
+import base64, codecs, hashlib, hmac, json, os, random, re, time, traceback, unicodedata, urllib.error, urllib.parse, urllib.request
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler
 
@@ -6,7 +6,10 @@ TOKEN = os.environ["TELEGRAM_TOKEN"]
 WEBHOOK_SECRET = os.environ["WEBHOOK_SECRET"]
 BOT_USERNAME = os.environ["BOT_USERNAME"].lstrip("@")
 GEMINI_KEY = os.environ["GEMINI_API_KEY"]
-MODEL = os.getenv("GEMINI_MODEL", "gemini-flash-latest")
+MODEL = os.getenv("GEMINI_MODEL", "gemini-flash-lite-latest")  # Flash-Lite: gần như không "suy nghĩ" -> trả lời nhanh
+# model chính quá tải (503/429) hoặc chậm thì thử lần lượt model dự phòng; mỗi model có tải & quota riêng
+MODELS = [MODEL] + [m for m in ("gemini-flash-lite-latest", "gemini-flash-latest") if m != MODEL]
+GEMINI_TIMEOUT = 25  # giây mỗi lần thử; 2 lần vẫn dưới maxDuration 60s trong vercel.json
 REDIS_URL = os.environ["UPSTASH_REDIS_REST_URL"]
 REDIS_TOKEN = os.environ["UPSTASH_REDIS_REST_TOKEN"]
 CREATOR_ID = 6664632552  # Đức Anh (@anhdd88), người tạo bot; ghi cứng, không đổi qua biến môi trường
@@ -48,10 +51,10 @@ RATE_LIMIT, RATE_WINDOW, COOLDOWN = 10, 30, 120  # 1 người gọi bot >10 tin 
 VN = timezone(timedelta(hours=7))
 
 
-def post(url, data, headers={}):
+def post(url, data, headers={}, timeout=60):
     req = urllib.request.Request(url, json.dumps(data).encode(), {"Content-Type": "application/json", **headers})
     try:
-        with urllib.request.urlopen(req, timeout=60) as r:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
             return json.load(r)
     except urllib.error.HTTPError as e:
         raise RuntimeError(f"{e.code}: {e.read().decode()[:300]}") from None
@@ -83,10 +86,17 @@ def rate_limited(uid):
 
 
 def gemini(contents, system=SYSTEM_PROMPT):
-    r = post(f"https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generateContent",
-             {"systemInstruction": {"parts": [{"text": system}]}, "contents": contents},
-             {"x-goog-api-key": GEMINI_KEY})
-    return "".join(p.get("text", "") for p in r["candidates"][0]["content"]["parts"]).strip() or "..."
+    err = None
+    for model in MODELS:
+        try:
+            r = post(f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+                     {"systemInstruction": {"parts": [{"text": system}]}, "contents": contents},
+                     {"x-goog-api-key": GEMINI_KEY}, timeout=GEMINI_TIMEOUT)
+            return "".join(p.get("text", "") for p in r["candidates"][0]["content"]["parts"]).strip() or "..."
+        except (RuntimeError, OSError) as e:  # HTTP lỗi (503 quá tải, 429 hết quota...) hoặc timeout/mạng
+            print("gemini", model, "failed:", e)
+            err = e
+    raise err
 
 
 def send(chat_id, text, reply_to=None, nicks=None):
@@ -369,8 +379,11 @@ def handle(msg):
         # cả vài lượt trước, bắt kiểu "nó ngu ko" ngay sau khi nhắc tên
         recent = text + json.dumps(hist[-4:], ensure_ascii=False)
         reply = ask(hist + [{"role": "user", "parts": parts}], recent, nicks)
-    except Exception as e:
-        return send(chat_id, f"Lỗi gọi AI: {e}", msg["message_id"])
+    except Exception as e:  # mọi model đều quá tải/lỗi: báo kiểu người, chỉ người tạo thấy chi tiết lỗi
+        print("ai error:", e)
+        busy = (f"Em đang lag anh ơi 😵‍💫 Gemini quá tải, lát anh hỏi lại nha.\n({str(e)[:200]})"
+                if user.get("id") == CREATOR_ID else "Não tui đang lag, hỏi lại sau xíu nha 😵‍💫")
+        return send(chat_id, busy, msg["message_id"])
     saved = [p if "text" in p else {"text": "[gửi kèm 1 file]"} for p in parts]  # không lưu file vào Redis
     hist += [{"role": "user", "parts": saved}, {"role": "model", "parts": [{"text": reply}]}]
     redis("SET", key, json.dumps(hist[-MAX_HISTORY:]), "EX", HISTORY_TTL)
@@ -427,6 +440,15 @@ def qstash_ok(sig, body):
             and str(claims.get("body", "")).rstrip("=") in (b64url(digest), base64.b64encode(digest).decode().rstrip("=")))
 
 
+def report_error(where, e):
+    """In đủ traceback ra log Vercel + nhắn riêng cho người tạo, để lỗi không bị im lặng."""
+    traceback.print_exc()
+    try:
+        send(CREATOR_ID, f"⚠️ Bot lỗi ({where}): {type(e).__name__}: {e}"[:1000])
+    except Exception:
+        pass  # chính Telegram lỗi (sai token...) thì chỉ còn log
+
+
 class handler(BaseHTTPRequestHandler):
     def do_POST(self):
         body = self.rfile.read(int(self.headers.get("Content-Length", 0)))
@@ -437,7 +459,7 @@ class handler(BaseHTTPRequestHandler):
             try:
                 scheduled(json.loads(body or b"{}").get("job"))  # body nằm trong chữ ký QStash, không giả được
             except Exception as e:
-                print("daily error:", e)
+                report_error("scheduled", e)
                 return self.done(500)  # QStash tự gửi lại
             return self.done(200)
 
@@ -446,7 +468,7 @@ class handler(BaseHTTPRequestHandler):
         try:
             handle(json.loads(body).get("message"))
         except Exception as e:
-            print("webhook error:", e)  # vẫn trả 200, nếu không Telegram gửi lại mãi
+            report_error("webhook", e)  # vẫn trả 200, nếu không Telegram gửi lại mãi
         self.done(200)
 
     def done(self, code):
